@@ -4,7 +4,7 @@ import logging
 import os
 from datetime import datetime, UTC, timedelta
 
-from apolo_kube_client.client import KubeClient, kube_client_from_config
+from apolo_kube_client.client import kube_client_from_config
 from apolo_kube_client.errors import ResourceNotFound
 from cryptography import x509
 from cryptography.hazmat._oid import NameOID
@@ -12,10 +12,9 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from hooks.kube import create_kube_config
+from hooks.kube import create_kube_config, get_cert_secret, create_cert_secret
 
 logger = logging.getLogger(__name__)
-
 
 PUBLIC_EXPONENT = 65537
 KEY_SIZE = 2048
@@ -73,13 +72,13 @@ def generate_ca_and_server_cert(service_dns_name: str) -> dict[str, str]:
 
     server_cert_builder = (
         x509.CertificateBuilder()
-            .subject_name(server_subject)
-            .issuer_name(ca_cert.subject)
-            .public_key(server_key.public_key())
-            .serial_number(x509.random_serial_number())
-            .not_valid_before(datetime.utcnow())
-            .not_valid_after(datetime.utcnow() + timedelta(days=EXP_DAYS))
-            .add_extension(alt_names, critical=False)
+        .subject_name(server_subject)
+        .issuer_name(ca_cert.subject)
+        .public_key(server_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.utcnow())
+        .not_valid_after(datetime.utcnow() + timedelta(days=EXP_DAYS))
+        .add_extension(alt_names, critical=False)
     )
 
     server_cert = server_cert_builder.sign(
@@ -107,31 +106,20 @@ async def main():
     service_name = os.environ["SERVICE_NAME"]
     service_dsn = f"{service_name}.{namespace}.svc"
     kube_config = create_kube_config()
-    secret_name = f"admission-controller-certs-{service_name}"
 
     async with kube_client_from_config(kube_config) as kube:
-        kube: KubeClient
         try:
-            await kube.get(f'{kube.namespace_url}/secrets/{secret_name}')
+            await get_cert_secret(kube, service_name)
         except ResourceNotFound:
+            # mean we need to create certs
             pass
         else:
             # if there is an existing secret - we can safely exit.
             return
 
-        # need to create certificates and put them into a secret
+        # let's create certificates, and put them into a secret
         certs = generate_ca_and_server_cert(service_dns_name=service_dsn)
-
-        await kube.post(
-            f'{kube.namespace_url}/secrets',
-            json={
-                "apiVersion": "v1",
-                "kind": "Secret",
-                "metadata": {"name": secret_name, "labels": {}},
-                "data": certs,
-                "type": "kubernetes.io/tls",
-            }
-        )
+        await create_cert_secret(kube, service_name, certs)
 
 
 if __name__ == '__main__':

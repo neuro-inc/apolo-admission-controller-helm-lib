@@ -19,6 +19,10 @@
   value: "{{ .Values.apoloAdmissionController.webhookName }}"
 - name: WEBHOOK_PATH
   value: "{{ .Values.apoloAdmissionController.webhookPath }}"
+- name: MATCH_LABEL_NAME
+  value: "{{ .Values.apoloAdmissionController.matchLabelName }}"
+- name: FAILURE_POLICY
+  value: "{{ .Values.apoloAdmissionController.failurePolicy }}"
 {{- end -}}
 
 {{- define "apolo-admission-controller-helm-lib.kubeAuthMountRoot" -}}
